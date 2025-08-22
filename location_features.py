@@ -217,47 +217,100 @@ class LocationFeatureProcessor:
         df['combined_text'] = text_data
         
         # 选择文本编码方式
-        if SENTENCE_TRANSFORMERS_AVAILABLE and Config.ENABLE_LOCATION_FEATURES:
+        if (SENTENCE_TRANSFORMERS_AVAILABLE and 
+            Config.ENABLE_LOCATION_FEATURES and 
+            getattr(Config, 'ENABLE_TEXT_FEATURES', True)):
             self._encode_text_with_sentence_transformer(df)
         else:
+            print("跳过文本特征编码或使用TF-IDF替代")
             self._encode_text_with_tfidf(df)
         
         print(f"处理了 {len(available_text_cols)} 个文本特征")
     
     def _encode_text_with_sentence_transformer(self, df: pd.DataFrame):
-        """使用Sentence Transformer编码文本"""
+        """使用Sentence Transformer编码文本（优化版本）"""
         try:
             print("使用Sentence Transformer编码文本...")
-            model = SentenceTransformer(Config.LOCATION_TEXT_EMBEDDING_MODEL)
+            print(f"总共需要处理 {len(df)} 条文本数据")
             
-            # 过滤空文本
-            valid_texts = [text for text in df['combined_text'] if text.strip()]
+            # 设置设备
+            device = 'cuda' if torch.cuda.is_available() else 'cpu'
+            print(f"使用设备: {device}")
+            
+            model = SentenceTransformer(Config.LOCATION_TEXT_EMBEDDING_MODEL, device=device)
+            
+            # 过滤空文本并建立索引映射
+            valid_texts = []
+            text_indices = []
+            
+            for idx, text in enumerate(df['combined_text']):
+                if text.strip():
+                    valid_texts.append(text.strip()[:Config.LOCATION_TEXT_MAX_LENGTH])  # 截断长文本
+                    text_indices.append(idx)
+            
+            print(f"有效文本数量: {len(valid_texts)}")
             
             if valid_texts:
-                embeddings = model.encode(valid_texts, 
-                                        max_seq_length=Config.LOCATION_TEXT_MAX_LENGTH,
-                                        show_progress_bar=True)
+                # 分批处理，避免内存问题
+                batch_size = min(getattr(Config, 'LOCATION_TEXT_BATCH_SIZE', 64), len(valid_texts))
+                embeddings_list = []
                 
-                # 将嵌入向量保存到DataFrame
+                print(f"分批处理，批次大小: {batch_size}")
+                
+                for i in range(0, len(valid_texts), batch_size):
+                    batch_texts = valid_texts[i:i+batch_size]
+                    print(f"处理批次 {i//batch_size + 1}/{(len(valid_texts)-1)//batch_size + 1}")
+                    
+                    try:
+                        batch_embeddings = model.encode(
+                            batch_texts,
+                            batch_size=batch_size,
+                            show_progress_bar=False,  # 关闭内部进度条
+                            convert_to_numpy=True,
+                            normalize_embeddings=True  # 归一化嵌入
+                        )
+                        embeddings_list.append(batch_embeddings)
+                        
+                        # 强制垃圾回收
+                        if device == 'cuda':
+                            torch.cuda.empty_cache()
+                            
+                    except Exception as batch_e:
+                        print(f"批次处理失败: {batch_e}")
+                        # 如果批次失败，使用零向量填充
+                        dummy_embedding = np.zeros((len(batch_texts), 384))  # 默认维度
+                        embeddings_list.append(dummy_embedding)
+                
+                # 合并所有嵌入
+                embeddings = np.vstack(embeddings_list)
+                print(f"合并后的嵌入形状: {embeddings.shape}")
+                
+                # 高效地将嵌入向量保存到DataFrame
                 embedding_dim = embeddings.shape[1]
+                
+                # 初始化所有嵌入列为0
                 for i in range(embedding_dim):
                     df[f'text_emb_{i}'] = 0.0
                 
-                valid_idx = 0
-                for idx, text in enumerate(df['combined_text']):
-                    if text.strip():
-                        for i in range(embedding_dim):
-                            df.at[idx, f'text_emb_{i}'] = embeddings[valid_idx][i]
-                        valid_idx += 1
+                # 批量更新有效文本的嵌入
+                for emb_idx, df_idx in enumerate(text_indices):
+                    for i in range(embedding_dim):
+                        df.at[df_idx, f'text_emb_{i}'] = embeddings[emb_idx][i]
                 
-                self.text_encoder = {'type': 'sentence_transformer', 
-                                   'model_name': Config.LOCATION_TEXT_EMBEDDING_MODEL,
-                                   'embedding_dim': embedding_dim}
+                self.text_encoder = {
+                    'type': 'sentence_transformer', 
+                    'model_name': Config.LOCATION_TEXT_EMBEDDING_MODEL,
+                    'embedding_dim': embedding_dim
+                }
                 
-                print(f"生成了 {embedding_dim} 维的文本嵌入")
+                print(f"成功生成了 {embedding_dim} 维的文本嵌入")
+            else:
+                print("没有有效的文本数据")
             
         except Exception as e:
             print(f"Sentence Transformer编码失败，回退到TF-IDF: {e}")
+            import traceback
+            traceback.print_exc()
             self._encode_text_with_tfidf(df)
     
     def _encode_text_with_tfidf(self, df: pd.DataFrame):

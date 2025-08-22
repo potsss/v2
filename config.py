@@ -113,6 +113,8 @@ class Config:
     # 语义特征处理
     LOCATION_TEXT_EMBEDDING_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"  # 支持中文的模型
     LOCATION_TEXT_MAX_LENGTH = 128
+    LOCATION_TEXT_BATCH_SIZE = 64  # 文本编码批次大小，减少内存使用
+    ENABLE_TEXT_FEATURES = True  # 是否启用文本特征（可以关闭以跳过耗时的文本编码）
     
     # 类别特征处理
     LOCATION_CATEGORICAL_MIN_FREQ = 3  # 类别特征最小频次
