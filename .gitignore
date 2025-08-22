@@ -63,6 +63,7 @@ experiments/*/models/
 experiments/*/logs/
 experiments/*/runs/
 experiments/*/visualizations/
+experiments/
 
 
 
