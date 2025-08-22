@@ -64,10 +64,7 @@ experiments/*/logs/
 experiments/*/runs/
 experiments/*/visualizations/
 
-# Data files (可选，如果不想上传数据文件)
-data/*.csv
-data/*.tsv
-data/*.zip
+
 
 # 临时文件
 *.tmp
