@@ -42,17 +42,41 @@ def preprocess():
 
 
 def train(user_sequences, url_mappings):
-    vocab_size = len(url_mappings["url_to_id"])
-    model = Item2Vec(vocab_size, Config.EMBEDDING_DIM) if Config.MODEL_TYPE == "item2vec" else Node2Vec(vocab_size, Config.EMBEDDING_DIM)
-    trainer = TrainerV2(model)
-    if Config.MODEL_TYPE == "node2vec":
-        graph = build_item_graph(user_sequences, directed=False)
-        walks = generate_walks(graph, Config.NUM_WALKS, Config.WALK_LENGTH, Config.P_PARAM, Config.Q_PARAM)
-        trainer.train(walks, save_prefix="")
+    if Config.MODEL_TYPE == "matrix_factorization":
+        print("检测到矩阵分解模式，将使用矩阵分解训练...")
+        # 使用矩阵分解训练
+        dp = DataPreprocessorV2()
+        success = dp.process_matrix_factorization()
+        if success:
+            print("矩阵分解训练完成！")
+            # 计算并保存用户向量
+            print("计算基于矩阵分解的用户向量...")
+            user_embeddings = dp.compute_mf_user_embeddings(method=Config.MF_USER_AGGREGATION)
+            
+            if user_embeddings:
+                output_path = os.path.join(Config.MODEL_SAVE_PATH, "matrix_factorization_user_embeddings.pkl")
+                os.makedirs(Config.MODEL_SAVE_PATH, exist_ok=True)
+                import pickle as _p
+                with open(output_path, "wb") as f:
+                    _p.dump(user_embeddings, f)
+                print(f"矩阵分解用户向量已保存: {output_path}")
+                return None  # 矩阵分解不返回model对象
+        else:
+            print("矩阵分解训练失败！")
+            return None
     else:
-        trainer.train(user_sequences, save_prefix="")
-    trainer.save_model(model_type=Config.MODEL_TYPE)
-    return model
+        # 使用Item2Vec/Node2Vec训练
+        vocab_size = len(url_mappings["url_to_id"])
+        model = Item2Vec(vocab_size, Config.EMBEDDING_DIM) if Config.MODEL_TYPE == "item2vec" else Node2Vec(vocab_size, Config.EMBEDDING_DIM)
+        trainer = TrainerV2(model)
+        if Config.MODEL_TYPE == "node2vec":
+            graph = build_item_graph(user_sequences, directed=False)
+            walks = generate_walks(graph, Config.NUM_WALKS, Config.WALK_LENGTH, Config.P_PARAM, Config.Q_PARAM)
+            trainer.train(walks, save_prefix="")
+        else:
+            trainer.train(user_sequences, save_prefix="")
+        trainer.save_model(model_type=Config.MODEL_TYPE)
+        return model
 
 
 def visualize(model, user_sequences, url_mappings):
@@ -113,8 +137,9 @@ def cli():
         # 训练行为模型
         # 若需要断点续训，尝试加载行为检查点
         model = train(user_sequences, url_mappings)
-        # 若启用位置，同步训练位置模型
-        if Config.ENABLE_LOCATION:
+        
+        # 若启用位置，同步训练位置模型（仅对非矩阵分解模式）
+        if Config.ENABLE_LOCATION and Config.MODEL_TYPE != "matrix_factorization":
             dp = DataPreprocessorV2()
             loc_seq, loc_map = dp.load_location_processed()
             if loc_seq and len(loc_seq) > 0:
@@ -153,27 +178,55 @@ def cli():
                         Config.LEARNING_RATE, Config.EPOCHS, Config.BATCH_SIZE, Config.WINDOW_SIZE, Config.NEGATIVE_SAMPLES = ori_lr, ori_epochs, ori_bs, ori_ws, ori_neg
 
     if args.mode in ("visualize", "all"):
-        if model is None:
-            # 尝试加载已训练模型
-            vocab = len(url_mappings["url_to_id"]) if url_mappings else 0
-            model = Item2Vec(vocab, Config.EMBEDDING_DIM)
-            model_path = os.path.join(Config.MODEL_SAVE_PATH, f"{'item2vec' if Config.MODEL_TYPE=='item2vec' else 'node2vec'}_model.pth")
-            if os.path.exists(model_path):
-                ckpt = torch.load(model_path, map_location=Config.DEVICE_OBJ, weights_only=False)
-                model.load_state_dict(ckpt["model_state_dict"])
-        if model is not None:
-            visualize(model, user_sequences, url_mappings)
+        if Config.MODEL_TYPE == "matrix_factorization":
+            # 矩阵分解模式的可视化
+            mf_path = os.path.join(Config.MODEL_SAVE_PATH, "matrix_factorization_user_embeddings.pkl")
+            if os.path.exists(mf_path):
+                import pickle as _p
+                with open(mf_path, "rb") as f:
+                    ue = _p.load(f)
+                emb = list(ue.values())
+                labels = list(ue.keys())
+                if emb:
+                    path = tsne_scatter(
+                        embeddings=torch.tensor(emb).numpy(),
+                        labels=labels,
+                        title="矩阵分解用户嵌入向量_t-sne_可视化",
+                        sample_size=500,
+                    )
+                    print(f"可视化已保存: {path}")
+            else:
+                print("未找到矩阵分解用户向量，请先运行 --mode train")
+        else:
+            if model is None:
+                # 尝试加载已训练模型
+                vocab = len(url_mappings["url_to_id"]) if url_mappings else 0
+                model = Item2Vec(vocab, Config.EMBEDDING_DIM)
+                model_path = os.path.join(Config.MODEL_SAVE_PATH, f"{'item2vec' if Config.MODEL_TYPE=='item2vec' else 'node2vec'}_model.pth")
+                if os.path.exists(model_path):
+                    ckpt = torch.load(model_path, map_location=Config.DEVICE_OBJ, weights_only=False)
+                    model.load_state_dict(ckpt["model_state_dict"])
+            if model is not None:
+                visualize(model, user_sequences, url_mappings)
 
     if args.mode in ("compute_embeddings", "all"):
-        if model is None:
-            vocab = len(url_mappings["url_to_id"]) if url_mappings else 0
-            model = Item2Vec(vocab, Config.EMBEDDING_DIM)
-            model_path = os.path.join(Config.MODEL_SAVE_PATH, f"{'item2vec' if Config.MODEL_TYPE=='item2vec' else 'node2vec'}_model.pth")
-            if os.path.exists(model_path):
-                ckpt = torch.load(model_path, map_location=Config.DEVICE_OBJ, weights_only=False)
-                model.load_state_dict(ckpt["model_state_dict"])
-        if model is not None:
-            compute_embeddings(model, user_sequences, url_mappings)
+        if Config.MODEL_TYPE == "matrix_factorization":
+            print("矩阵分解模式：用户嵌入已在训练阶段保存")
+            mf_path = os.path.join(Config.MODEL_SAVE_PATH, "matrix_factorization_user_embeddings.pkl")
+            if os.path.exists(mf_path):
+                print(f"矩阵分解用户向量位置: {mf_path}")
+            else:
+                print("未找到矩阵分解用户向量，请先运行 --mode train")
+        else:
+            if model is None:
+                vocab = len(url_mappings["url_to_id"]) if url_mappings else 0
+                model = Item2Vec(vocab, Config.EMBEDDING_DIM)
+                model_path = os.path.join(Config.MODEL_SAVE_PATH, f"{'item2vec' if Config.MODEL_TYPE=='item2vec' else 'node2vec'}_model.pth")
+                if os.path.exists(model_path):
+                    ckpt = torch.load(model_path, map_location=Config.DEVICE_OBJ, weights_only=False)
+                    model.load_state_dict(ckpt["model_state_dict"])
+            if model is not None:
+                compute_embeddings(model, user_sequences, url_mappings)
 
     if args.mode == "compute_new_users":
         if model is None:
