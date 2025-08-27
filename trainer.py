@@ -231,15 +231,26 @@ class FusionTrainer:
             weight_decay=Config.FUSION_WEIGHT_DECAY
         )
         
-        # 学习率调度器：ReduceLROnPlateau
-        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            self.opt,
-            mode='min',
-            factor=Config.FUSION_LR_DECAY_FACTOR,
-            patience=Config.FUSION_LR_DECAY_PATIENCE,
-            verbose=False,  # 关闭verbose避免警告
-            min_lr=1e-6
-        )
+        # 学习率调度器：ReduceLROnPlateau（兼容不同PyTorch版本）
+        try:
+            # 尝试使用verbose参数（PyTorch 1.4.0+）
+            self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+                self.opt,
+                mode='min',
+                factor=Config.FUSION_LR_DECAY_FACTOR,
+                patience=Config.FUSION_LR_DECAY_PATIENCE,
+                verbose=False,
+                min_lr=1e-6
+            )
+        except TypeError:
+            # 旧版本PyTorch不支持verbose参数
+            self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+                self.opt,
+                mode='min',
+                factor=Config.FUSION_LR_DECAY_FACTOR,
+                patience=Config.FUSION_LR_DECAY_PATIENCE,
+                min_lr=1e-6
+            )
         
         # 早停相关
         self.best_loss = float('inf')
