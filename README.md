@@ -103,6 +103,51 @@ python main.py --mode compute_attribute_embeddings --experiment_name my_exp --en
 python main.py --mode compute_new_users --experiment_name my_exp
 ```
 
+## 用户扩量（Look-alike Modeling）
+
+### 数据准备
+```bash
+# 1. 生成综合用户向量文件
+python main.py --mode compute_fused_embeddings --enable_attributes --enable_location
+
+# 2. 准备种子用户文件（CSV格式，第一列为user_id）
+# 示例：seed_users.csv
+# user_id
+# user_001
+# user_002
+```
+
+### 运行扩量
+```bash
+# 基本用法
+python user_expansion.py \
+    --embeddings_path experiments/location_feature/models/comprehensive_user_embeddings.pkl \
+    --seed_users_path seed_users.csv \
+    --output_dir expansion_results \
+    --top_k 1000
+
+# 使用深度学习模型
+python user_expansion.py \
+    --embeddings_path experiments/location_feature/models/comprehensive_user_embeddings.pkl \
+    --seed_users_path seed_users.csv \
+    --use_deep_learning \
+    --save_model expansion_model.pkl
+```
+
+### 快速示例
+```bash
+# 运行完整示例（自动生成种子用户）
+python expansion_example.py --mode run
+
+# 分析扩量结果
+python expansion_example.py --mode analyze
+```
+
+### 输出文件
+- `all_users_predictions.csv`: 所有用户的扩量分数
+- `expansion_results.csv`: Top-K扩量用户及各维度相似度
+- `expansion_model.pkl`: 训练好的扩量模型
+
 
 ### 训练与融合细节
 

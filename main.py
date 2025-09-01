@@ -669,10 +669,10 @@ def cli():
             print(f"位置用户向量已保存: {loc_out}")
         
         # 单独保存属性向量（如果存在）
+        attr_embeddings = {}
         if attr_raw and attr_info:
             print("计算属性用户向量...")
             # 使用融合训练器中的属性模型生成属性向量
-            attr_embeddings = {}
             if hasattr(ft, 'attribute_model') and ft.attribute_model is not None:
                 ft.attribute_model.eval()
                 with torch.no_grad():
@@ -691,6 +691,25 @@ def cli():
                 print(f"属性用户向量已保存: {attr_out}")
             else:
                 print("未能生成属性用户向量，可能是属性模型未正确加载")
+        
+        # 保存综合用户向量文件（包含所有向量类型）
+        print("生成综合用户向量文件...")
+        comprehensive_embeddings = {}
+        for user_id in fused:
+            user_data = {
+                'user_id': user_id,
+                'fused_embedding': fused[user_id],
+                'behavior_embedding': ue.get(user_id, None),
+                'location_embedding': loc_embeddings.get(user_id, None) if loc_embeddings else None,
+                'attribute_embedding': attr_embeddings.get(user_id, None) if attr_embeddings else None
+            }
+            comprehensive_embeddings[user_id] = user_data
+        
+        comprehensive_out = os.path.join(Config.MODEL_SAVE_PATH, "comprehensive_user_embeddings.pkl")
+        with open(comprehensive_out, "wb") as f:
+            _p.dump(comprehensive_embeddings, f)
+        print(f"综合用户向量文件已保存: {comprehensive_out}")
+        print(f"包含 {len(comprehensive_embeddings)} 个用户的完整向量信息")
 
     # 单独计算位置向量模式
     if args.mode == "compute_location_embeddings":
