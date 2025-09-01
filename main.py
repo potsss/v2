@@ -845,7 +845,6 @@ def cli():
                 attr_info = _p.load(f)
             
             # 加载融合模型以获取属性模型
-            from .trainer import FusionTrainer
             behavior_dim = Config.EMBEDDING_DIM if Config.MODEL_TYPE != "matrix_factorization" else Config.MF_FACTORS
             ft = FusionTrainer(behavior_dim, attribute_info=attr_info, location_dim=None)
             
