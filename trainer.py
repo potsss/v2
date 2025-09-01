@@ -339,6 +339,41 @@ class FusionTrainer:
             l_tensor = torch.stack(l_list, dim=0)
         return uids, b, (cat_inputs, num_inputs, cat_labels), l_tensor
 
+    def _prepare_single_user_attributes(self, user_attrs, attr_info):
+        """
+        将单个用户的原始属性转换为模型输入格式
+        
+        Args:
+            user_attrs: 单个用户的原始属性字典
+            attr_info: 属性信息字典
+            
+        Returns:
+            (categorical_inputs, numerical_inputs): 模型输入格式
+        """
+        if self.attribute_info is None or user_attrs is None:
+            return None, None
+            
+        # 处理类别属性
+        categorical_inputs = {}
+        for name in self.categorical_attrs:
+            val = 0  # 默认值
+            if name in user_attrs:
+                val = int(user_attrs[name])
+            categorical_inputs[name] = torch.tensor([val], dtype=torch.long)
+        
+        # 处理数值属性
+        numerical_inputs = None
+        if len(self.numerical_attrs) > 0:
+            row = []
+            for name in self.numerical_attrs:
+                val = 0.0  # 默认值
+                if name in user_attrs:
+                    val = float(user_attrs[name])
+                row.append(val)
+            numerical_inputs = torch.tensor([row], dtype=torch.float32)
+            
+        return categorical_inputs, numerical_inputs
+
     def _fusion_ckpt_path(self):
         return os.path.join(Config.CHECKPOINT_DIR, "fusion_latest_checkpoint.pth")
 

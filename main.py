@@ -678,11 +678,18 @@ def cli():
                 with torch.no_grad():
                     for user_id, attrs in attr_raw.items():
                         if user_id in ue:  # 只处理有行为向量的用户
-                            # 将属性转换为张量
-                            attr_tensor = ft._prepare_attributes(attrs, attr_info)
-                            if attr_tensor is not None:
-                                attr_embedding = ft.attribute_model(attr_tensor.unsqueeze(0).to(Config.DEVICE_OBJ))
-                                attr_embeddings[user_id] = attr_embedding.cpu().numpy().flatten()
+                            # 将属性转换为模型输入格式
+                            cat_inputs, num_inputs = ft._prepare_single_user_attributes(attrs, attr_info)
+                            if cat_inputs is not None or num_inputs is not None:
+                                # 移动到设备
+                                if cat_inputs:
+                                    cat_inputs = {k: v.to(Config.DEVICE_OBJ) for k, v in cat_inputs.items()}
+                                if num_inputs is not None:
+                                    num_inputs = num_inputs.to(Config.DEVICE_OBJ)
+                                
+                                attr_embedding = ft.attribute_model(cat_inputs, num_inputs)
+                                if attr_embedding is not None:
+                                    attr_embeddings[user_id] = attr_embedding.cpu().numpy().flatten()
             
             if attr_embeddings:
                 attr_out = os.path.join(Config.MODEL_SAVE_PATH, "attribute_user_embeddings.pkl")
@@ -858,10 +865,17 @@ def cli():
                     ft.attribute_model.eval()
                     with torch.no_grad():
                         for user_id, attrs in attr_raw.items():
-                            attr_tensor = ft._prepare_attributes(attrs, attr_info)
-                            if attr_tensor is not None:
-                                attr_embedding = ft.attribute_model(attr_tensor.unsqueeze(0).to(Config.DEVICE_OBJ))
-                                attr_embeddings[user_id] = attr_embedding.cpu().numpy().flatten()
+                            cat_inputs, num_inputs = ft._prepare_single_user_attributes(attrs, attr_info)
+                            if cat_inputs is not None or num_inputs is not None:
+                                # 移动到设备
+                                if cat_inputs:
+                                    cat_inputs = {k: v.to(Config.DEVICE_OBJ) for k, v in cat_inputs.items()}
+                                if num_inputs is not None:
+                                    num_inputs = num_inputs.to(Config.DEVICE_OBJ)
+                                
+                                attr_embedding = ft.attribute_model(cat_inputs, num_inputs)
+                                if attr_embedding is not None:
+                                    attr_embeddings[user_id] = attr_embedding.cpu().numpy().flatten()
                 
                 if attr_embeddings:
                     os.makedirs(Config.MODEL_SAVE_PATH, exist_ok=True)
