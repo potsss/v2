@@ -104,7 +104,7 @@ def compute_embeddings(model, user_sequences, url_mappings):
 
 def cli():
     p = argparse.ArgumentParser()
-    p.add_argument("--mode", choices=["preprocess", "train", "visualize", "compute_embeddings", "compute_new_users", "train_fusion", "compute_fused_embeddings", "matrix_factorization", "all"], default="all")
+    p.add_argument("--mode", choices=["preprocess", "train", "visualize", "compute_embeddings", "compute_new_users", "train_fusion", "compute_fused_embeddings", "compute_location_embeddings", "compute_attribute_embeddings", "matrix_factorization", "all"], default="all")
     p.add_argument("--experiment_name", type=str, default=None)
     p.add_argument("--model_type", choices=["item2vec", "node2vec"], default=None)
     p.add_argument("--enable_attributes", action="store_true")
@@ -653,11 +653,210 @@ def cli():
         if os.path.exists(fm):
             ft.model.load_state_dict(torch.load(fm, map_location=Config.DEVICE_OBJ, weights_only=False))
         fused = ft.export_embeddings(ue, attribute_raw=attr_raw, location_embeddings=loc_embeddings)
+        
+        # 保存融合用户向量
         out = os.path.join(Config.MODEL_SAVE_PATH, "fused_user_embeddings.pkl")
         import pickle as _p
         with open(out, "wb") as f:
             _p.dump(fused, f)
         print(f"融合用户向量已保存: {out}")
+        
+        # 单独保存位置向量（如果存在）
+        if loc_embeddings:
+            loc_out = os.path.join(Config.MODEL_SAVE_PATH, "location_user_embeddings.pkl")
+            with open(loc_out, "wb") as f:
+                _p.dump(loc_embeddings, f)
+            print(f"位置用户向量已保存: {loc_out}")
+        
+        # 单独保存属性向量（如果存在）
+        if attr_raw and attr_info:
+            print("计算属性用户向量...")
+            # 使用融合训练器中的属性模型生成属性向量
+            attr_embeddings = {}
+            if hasattr(ft, 'attribute_model') and ft.attribute_model is not None:
+                ft.attribute_model.eval()
+                with torch.no_grad():
+                    for user_id, attrs in attr_raw.items():
+                        if user_id in ue:  # 只处理有行为向量的用户
+                            # 将属性转换为张量
+                            attr_tensor = ft._prepare_attributes(attrs, attr_info)
+                            if attr_tensor is not None:
+                                attr_embedding = ft.attribute_model(attr_tensor.unsqueeze(0).to(Config.DEVICE_OBJ))
+                                attr_embeddings[user_id] = attr_embedding.cpu().numpy().flatten()
+            
+            if attr_embeddings:
+                attr_out = os.path.join(Config.MODEL_SAVE_PATH, "attribute_user_embeddings.pkl")
+                with open(attr_out, "wb") as f:
+                    _p.dump(attr_embeddings, f)
+                print(f"属性用户向量已保存: {attr_out}")
+            else:
+                print("未能生成属性用户向量，可能是属性模型未正确加载")
+
+    # 单独计算位置向量模式
+    if args.mode == "compute_location_embeddings":
+        if not Config.ENABLE_LOCATION:
+            print("请使用 --enable_location 启用位置功能")
+            return
+        
+        if user_sequences is None or url_mappings is None:
+            dp = DataPreprocessorV2()
+            user_sequences, url_mappings = dp.load_processed()
+        
+        dp = DataPreprocessorV2()
+        loc_seq, loc_map = dp.load_location_processed()
+        
+        if loc_seq and len(loc_seq) > 0:
+            loc_embeddings = None
+            
+            if Config.ENABLE_LOCATION_FEATURES and dp.location_feature_processor and dp.location_feature_processor.location_features:
+                print("使用增强的位置特征嵌入...")
+                from .location_features import EnhancedLocationEmbedding
+                
+                if Config.MODEL_TYPE == "matrix_factorization":
+                    als_model_path = os.path.join(Config.PROCESSED_DATA_PATH, "als_model.pkl")
+                    if os.path.exists(als_model_path):
+                        from .matrix_factorization import ALSMatrixFactorization
+                        als_model = ALSMatrixFactorization()
+                        als_model.load_model(als_model_path)
+                        
+                        enhanced_loc_embedding = EnhancedLocationEmbedding(
+                            als_model, loc_map, dp.location_feature_processor
+                        )
+                        loc_embeddings = enhanced_loc_embedding.compute_enhanced_user_location_embeddings(loc_seq)
+                else:
+                    if loc_map and "bs_to_id" in loc_map:
+                        bs_vocab = len(loc_map["bs_to_id"])
+                        model_name = f"location_{'node2vec' if Config.LOCATION_MODEL_TYPE=='node2vec' else 'item2vec'}_model.pth"
+                        loc_model_path = os.path.join(Config.MODEL_SAVE_PATH, model_name)
+                        if os.path.exists(loc_model_path):
+                            loc_model = Item2Vec(bs_vocab, Config.LOCATION_EMBEDDING_DIM) if Config.LOCATION_MODEL_TYPE == "item2vec" else Node2Vec(bs_vocab, Config.LOCATION_EMBEDDING_DIM)
+                            ckpt = torch.load(loc_model_path, map_location=Config.DEVICE_OBJ, weights_only=False)
+                            loc_model.load_state_dict(ckpt["model_state_dict"])
+                            
+                            enhanced_loc_embedding = EnhancedLocationEmbedding(
+                                loc_model, loc_map, dp.location_feature_processor
+                            )
+                            loc_embeddings = enhanced_loc_embedding.compute_enhanced_user_location_embeddings(loc_seq)
+            else:
+                print("使用基础位置嵌入...")
+                if Config.MODEL_TYPE == "matrix_factorization":
+                    # 矩阵分解模式的位置向量计算
+                    als_model_path = os.path.join(Config.PROCESSED_DATA_PATH, "als_model.pkl")
+                    mappings_path = os.path.join(Config.PROCESSED_DATA_PATH, "unified_item_mappings.pkl")
+                    
+                    if os.path.exists(als_model_path) and os.path.exists(mappings_path):
+                        from .matrix_factorization import ALSMatrixFactorization, UnifiedItemProcessor
+                        import pickle as _p
+                        
+                        als_model = ALSMatrixFactorization()
+                        als_model.load_model(als_model_path)
+                        
+                        item_processor = UnifiedItemProcessor()
+                        item_processor.load_mappings(mappings_path)
+                        
+                        item_embeddings = als_model.get_item_embeddings(normalize=True)
+                        loc_embeddings = {}
+                        
+                        for uid, seq in loc_seq.items():
+                            if not seq:
+                                continue
+                            
+                            vectors = []
+                            weights = []
+                            from collections import Counter
+                            location_counts = Counter(seq)
+                            
+                            for location_id, count in location_counts.items():
+                                if location_id in item_processor.item_to_id:
+                                    item_idx = item_processor.item_to_id[location_id]
+                                    vectors.append(item_embeddings[item_idx])
+                                    weights.append(float(count))
+                            
+                            if vectors:
+                                vectors = np.array(vectors)
+                                weights = np.array(weights)
+                                weights = weights / weights.sum()
+                                
+                                user_vector = np.average(vectors, axis=0, weights=weights)
+                                norm = np.linalg.norm(user_vector)
+                                if norm > 0:
+                                    user_vector = user_vector / norm
+                                
+                                loc_embeddings[uid] = user_vector
+                else:
+                    # Item2Vec/Node2Vec模式的位置向量计算
+                    if loc_map and "bs_to_id" in loc_map:
+                        bs_vocab = len(loc_map["bs_to_id"])
+                        model_name = f"location_{'node2vec' if Config.LOCATION_MODEL_TYPE=='node2vec' else 'item2vec'}_model.pth"
+                        loc_model_path = os.path.join(Config.MODEL_SAVE_PATH, model_name)
+                        if os.path.exists(loc_model_path):
+                            loc_model = Item2Vec(bs_vocab, Config.LOCATION_EMBEDDING_DIM) if Config.LOCATION_MODEL_TYPE == "item2vec" else Node2Vec(bs_vocab, Config.LOCATION_EMBEDDING_DIM)
+                            ckpt = torch.load(loc_model_path, map_location=Config.DEVICE_OBJ, weights_only=False)
+                            loc_model.load_state_dict(ckpt["model_state_dict"])
+                            
+                            loc_embeddings = UserEmbedding(loc_model, loc_seq, loc_map, id_key="bs_to_id").compute()
+            
+            if loc_embeddings:
+                os.makedirs(Config.MODEL_SAVE_PATH, exist_ok=True)
+                loc_out = os.path.join(Config.MODEL_SAVE_PATH, "location_user_embeddings.pkl")
+                import pickle as _p
+                with open(loc_out, "wb") as f:
+                    _p.dump(loc_embeddings, f)
+                print(f"位置用户向量已保存: {loc_out} (共 {len(loc_embeddings)} 个用户)")
+            else:
+                print("未能生成位置用户向量")
+        else:
+            print("未找到位置序列数据")
+
+    # 单独计算属性向量模式
+    if args.mode == "compute_attribute_embeddings":
+        if not Config.ENABLE_ATTRIBUTES:
+            print("请使用 --enable_attributes 启用属性功能")
+            return
+        
+        # 加载属性数据
+        import pickle as _p
+        ap = os.path.join(Config.PROCESSED_DATA_PATH, "user_attributes.pkl")
+        aip = os.path.join(Config.PROCESSED_DATA_PATH, "attribute_info.pkl")
+        
+        if os.path.exists(ap) and os.path.exists(aip):
+            with open(ap, "rb") as f:
+                attr_raw = _p.load(f)
+            with open(aip, "rb") as f:
+                attr_info = _p.load(f)
+            
+            # 加载融合模型以获取属性模型
+            from .trainer import FusionTrainer
+            behavior_dim = Config.EMBEDDING_DIM if Config.MODEL_TYPE != "matrix_factorization" else Config.MF_FACTORS
+            ft = FusionTrainer(behavior_dim, attribute_info=attr_info, location_dim=None)
+            
+            fm = os.path.join(Config.MODEL_SAVE_PATH, "fusion_model.pth")
+            if os.path.exists(fm):
+                ft.model.load_state_dict(torch.load(fm, map_location=Config.DEVICE_OBJ, weights_only=False))
+                
+                print("计算属性用户向量...")
+                attr_embeddings = {}
+                if hasattr(ft, 'attribute_model') and ft.attribute_model is not None:
+                    ft.attribute_model.eval()
+                    with torch.no_grad():
+                        for user_id, attrs in attr_raw.items():
+                            attr_tensor = ft._prepare_attributes(attrs, attr_info)
+                            if attr_tensor is not None:
+                                attr_embedding = ft.attribute_model(attr_tensor.unsqueeze(0).to(Config.DEVICE_OBJ))
+                                attr_embeddings[user_id] = attr_embedding.cpu().numpy().flatten()
+                
+                if attr_embeddings:
+                    os.makedirs(Config.MODEL_SAVE_PATH, exist_ok=True)
+                    attr_out = os.path.join(Config.MODEL_SAVE_PATH, "attribute_user_embeddings.pkl")
+                    with open(attr_out, "wb") as f:
+                        _p.dump(attr_embeddings, f)
+                    print(f"属性用户向量已保存: {attr_out} (共 {len(attr_embeddings)} 个用户)")
+                else:
+                    print("未能生成属性用户向量")
+            else:
+                print("未找到融合模型，请先运行 --mode train_fusion")
+        else:
+            print("未找到属性数据")
 
     # 矩阵分解模式
     if args.mode == "matrix_factorization":

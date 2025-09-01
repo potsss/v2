@@ -61,7 +61,7 @@
 - 实验根：`v2/experiments/<experiment_name>/`
   - `processed_data/`：`url_mappings.pkl`、`user_sequences.pkl`、`user_attributes.pkl`、`attribute_info.pkl`、`location_mappings.pkl`、`location_sequences.pkl`
   - `checkpoints/`：`latest_checkpoint.pth`、`best_model.pth`
-  - `models/`：行为 `item2vec_model.pth/node2vec_model.pth`；位置 `location_item2vec_model.pth/location_node2vec_model.pth`；融合 `fusion_model.pth`；向量 `user_embeddings.pkl/fused_user_embeddings.pkl`
+  - `models/`：行为 `item2vec_model.pth/node2vec_model.pth`；位置 `location_item2vec_model.pth/location_node2vec_model.pth`；融合 `fusion_model.pth`；向量 `user_embeddings.pkl/location_user_embeddings.pkl/attribute_user_embeddings.pkl/fused_user_embeddings.pkl`
   - `visualizations/`：t-SNE 图
 
 
@@ -90,6 +90,12 @@ python main.py --mode compute_fused_embeddings --experiment_name my_exp --enable
 ```bash
 python main.py --mode visualize --experiment_name my_exp
 python main.py --mode compute_embeddings --experiment_name my_exp
+```
+
+- 单独导出位置向量和属性向量
+```bash
+python main.py --mode compute_location_embeddings --experiment_name my_exp --enable_location
+python main.py --mode compute_attribute_embeddings --experiment_name my_exp --enable_attributes
 ```
 
 - 新用户向量
