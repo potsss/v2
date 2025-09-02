@@ -69,7 +69,7 @@ class AttributeProcessorV2:
         numerical_cols = [k for k, v in info.items() if v["type"] == "numerical"]
 
         if categorical_cols:
-            for col in categorical_cols:
+            for col in tqdm(categorical_cols, desc="编码类别列"):
                 df[col] = df[col].fillna("Unknown")
                 vc = df[col].value_counts()
                 rare = vc[vc < Config.CATEGORICAL_MIN_FREQ].index
@@ -81,18 +81,18 @@ class AttributeProcessorV2:
                     info[col]["vocab_size"] = len(enc.classes_)
 
         if numerical_cols:
-            for col in numerical_cols:
+            for col in tqdm(numerical_cols, desc="处理数值列"):
                 df[col] = df[col].fillna(df[col].mean())
             if Config.NUMERICAL_STANDARDIZATION:
                 df[numerical_cols] = self.numerical_scaler.fit_transform(df[numerical_cols])
 
         processed = {}
-        for _, row in df.iterrows():
-            uid = row[user_id_col]
+        for row in tqdm(df.itertuples(index=False), total=len(df), desc="汇总用户属性"):
+            uid = getattr(row, user_id_col)
             attrs = {}
             for col in df.columns:
                 if col != user_id_col:
-                    attrs[col] = row[col]
+                    attrs[col] = getattr(row, col)
             processed[uid] = attrs
 
         self.processed_attributes = processed
@@ -152,14 +152,14 @@ class DataPreprocessorV2:
         df["domain_id"] = df["domain"].map(self.url_to_id)
 
         # 构造序列
-        for uid, group in df.groupby("user_id"):
+        for uid, group in tqdm(df.groupby("user_id"), total=df["user_id"].nunique(), desc="构造行为序列"):
             # 使用 datetime 排序，更稳健的时序
             try:
                 group = group.assign(_ts=pd.to_datetime(group["timestamp_str"], errors="coerce")).sort_values("_ts").drop(columns=["_ts"])
             except Exception:
                 group = group.sort_values("timestamp_str")
             seq = []
-            for _, row in group.iterrows():
+            for _, row in tqdm(group.iterrows(), total=len(group), desc=f"用户{uid}事件", leave=False):
                 repeat_count = 1
                 if "weight" in row:
                     repeat_count = min(max(1, int(row["weight"])), Config.MAX_WEIGHT_REPEAT)
@@ -229,7 +229,7 @@ class DataPreprocessorV2:
         self.id_to_bs = {i: b for b, i in self.bs_to_id.items()}
         ldf["bs_id_int"] = ldf[bs_col].astype(str).map(self.bs_to_id)
         # 构造位置序列（支持duration权重）
-        for uid, group in ldf.groupby("user_id"):
+        for uid, group in tqdm(ldf.groupby("user_id"), total=ldf["user_id"].nunique(), desc="构造位置序列"):
             if ts_col is not None:
                 try:
                     group = group.assign(_ts=pd.to_datetime(group[ts_col], errors="coerce")).sort_values("_ts").drop(columns=["_ts"])
@@ -237,7 +237,7 @@ class DataPreprocessorV2:
                     group = group.sort_values(ts_col)
             
             seq = []
-            for _, row in group.iterrows():
+            for _, row in tqdm(group.iterrows(), total=len(group), desc=f"位置用户{uid}事件", leave=False):
                 repeat_count = 1
                 # 检查是否有duration列作为权重
                 if "duration" in row and pd.notna(row["duration"]):
@@ -318,7 +318,7 @@ class DataPreprocessorV2:
         
         # 添加URL物品
         all_urls = set()
-        for seq in self.user_sequences.values():
+        for seq in tqdm(self.user_sequences.values(), total=len(self.user_sequences), desc="汇总URL物品"):
             all_urls.update(seq)
         item_processor.add_items(list(all_urls), "url")
         print(f"添加了 {len(all_urls)} 个URL物品")
@@ -327,12 +327,12 @@ class DataPreprocessorV2:
         location_sequences = {}
         if Config.ENABLE_LOCATION and hasattr(self, 'user_location_sequences') and self.user_location_sequences:
             all_locations = set()
-            for seq in self.user_location_sequences.values():
+            for seq in tqdm(self.user_location_sequences.values(), total=len(self.user_location_sequences), desc="汇总位置物品"):
                 all_locations.update(seq)
             
             # 需要将位置ID转换为基站ID用于物品处理器
             location_items = []
-            for loc_id in all_locations:
+            for loc_id in tqdm(all_locations, total=len(all_locations), desc="转换位置ID为基站ID"):
                 if loc_id in self.id_to_bs:
                     bs_id = self.id_to_bs[loc_id]
                     location_items.append(bs_id)
@@ -341,7 +341,7 @@ class DataPreprocessorV2:
                 item_processor.add_items(location_items, "location")
                 # 转换位置序列中的ID为基站ID
                 converted_sequences = {}
-                for user_id, seq in self.user_location_sequences.items():
+                for user_id, seq in tqdm(self.user_location_sequences.items(), total=len(self.user_location_sequences), desc="转换位置序列"):
                     converted_seq = []
                     for loc_id in seq:
                         if loc_id in self.id_to_bs:

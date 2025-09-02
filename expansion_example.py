@@ -109,22 +109,24 @@ def run_expansion_example():
     top_k = min(1000, len(predictions_df[predictions_df['is_seed'] == 0]))
     expansion_users = predictions_df[predictions_df['is_seed'] == 0].head(top_k)
     
-    # 8. 计算相似度
-    print("\n8. 计算相似度...")
+    # 8. 计算群体相似度
+    print("\n8. 计算群体相似度...")
     seed_user_list = list(dataset.seed_users)
     top_user_list = expansion_users['user_id'].tolist()
     
-    similarities_df = model.compute_similarities(dataset, top_user_list, seed_user_list)
+    group_similarities = model.compute_group_similarities(dataset, top_user_list, seed_user_list)
     
-    # 9. 合并结果
-    final_results = expansion_users.merge(similarities_df, on='user_id', how='left')
-    
-    # 10. 保存结果
+    # 9. 保存结果
     print("\n9. 保存结果...")
     os.makedirs(output_dir, exist_ok=True)
     
     predictions_df.to_csv(os.path.join(output_dir, "all_users_predictions.csv"), index=False)
-    final_results.to_csv(os.path.join(output_dir, "expansion_results.csv"), index=False)
+    expansion_users.to_csv(os.path.join(output_dir, "expansion_results.csv"), index=False)
+    
+    # 保存群体相似度结果
+    group_similarities_df = pd.DataFrame([group_similarities])
+    group_similarities_df.to_csv(os.path.join(output_dir, "group_similarities.csv"), index=False)
+    
     model.save_model(os.path.join(output_dir, "expansion_model.pkl"))
     
     # 11. 结果分析
@@ -140,27 +142,27 @@ def run_expansion_example():
     print(f"最高分数: {expansion_users['score'].max():.4f}")
     print(f"最低分数: {expansion_users['score'].min():.4f}")
     
-    print(f"\n各维度相似度统计:")
+    # 群体相似度统计
+    print(f"\n=== 群体相似度统计 ===")
     for emb_type in ['fused_embedding', 'behavior_embedding', 'location_embedding', 'attribute_embedding']:
-        sim_col = f'{emb_type}_similarity'
-        if sim_col in final_results.columns:
-            valid_sims = final_results[sim_col].dropna()
-            if len(valid_sims) > 0:
-                print(f"{emb_type:20s}: {valid_sims.mean():.4f} ± {valid_sims.std():.4f}")
+        sim_key = f'{emb_type}_group_similarity'
+        if sim_key in group_similarities and group_similarities[sim_key] is not None:
+            print(f"{emb_type:20s}: {group_similarities[sim_key]:.4f}")
     
     # 12. 显示top-10结果
     print(f"\nTop-10 扩量用户:")
-    print(final_results[['user_id', 'score', 'fused_embedding_similarity', 
-                        'behavior_embedding_similarity']].head(10).to_string(index=False))
+    print(expansion_users[['user_id', 'score']].head(10).to_string(index=False))
     
     print(f"\n结果已保存到目录: {output_dir}")
     print("文件说明:")
     print("- all_users_predictions.csv: 所有用户的预测分数")
-    print("- expansion_results.csv: Top-K扩量用户及其相似度")
+    print("- expansion_results.csv: Top-K扩量用户")
+    print("- group_similarities.csv: 群体相似度结果")
     print("- expansion_model.pkl: 训练好的扩量模型")
 
 
-def analyze_results(results_path: str = "expansion_results/expansion_results.csv"):
+def analyze_results(results_path: str = "expansion_results/expansion_results.csv", 
+                   group_similarities_path: str = "expansion_results/group_similarities.csv"):
     """分析扩量结果"""
     
     if not os.path.exists(results_path):
@@ -169,9 +171,8 @@ def analyze_results(results_path: str = "expansion_results/expansion_results.csv
     
     print("=== 扩量结果深度分析 ===\n")
     
-    # 加载结果
+    # 加载扩量结果
     results_df = pd.read_csv(results_path)
-    
     print(f"扩量用户总数: {len(results_df)}")
     
     # 分数分布分析
@@ -186,19 +187,6 @@ def analyze_results(results_path: str = "expansion_results/expansion_results.csv
     for q in quantiles:
         print(f"P{int(q*100):2d}: {results_df['score'].quantile(q):.4f}")
     
-    # 相似度分析
-    similarity_cols = [col for col in results_df.columns if col.endswith('_similarity')]
-    
-    if similarity_cols:
-        print(f"\n各维度相似度分析:")
-        for col in similarity_cols:
-            valid_data = results_df[col].dropna()
-            if len(valid_data) > 0:
-                dim_name = col.replace('_similarity', '').replace('_', ' ').title()
-                print(f"{dim_name:15s}: 均值={valid_data.mean():.4f}, "
-                      f"标准差={valid_data.std():.4f}, "
-                      f"有效样本={len(valid_data)}")
-    
     # 高质量扩量用户
     high_score_threshold = results_df['score'].quantile(0.9)
     high_score_users = results_df[results_df['score'] >= high_score_threshold]
@@ -206,13 +194,20 @@ def analyze_results(results_path: str = "expansion_results/expansion_results.csv
     print(f"\n高分用户分析 (分数 >= {high_score_threshold:.4f}):")
     print(f"高分用户数: {len(high_score_users)}")
     
-    if similarity_cols:
-        print(f"高分用户各维度平均相似度:")
-        for col in similarity_cols:
-            valid_data = high_score_users[col].dropna()
-            if len(valid_data) > 0:
-                dim_name = col.replace('_similarity', '').replace('_', ' ').title()
-                print(f"  {dim_name:15s}: {valid_data.mean():.4f}")
+    # 群体相似度分析
+    if os.path.exists(group_similarities_path):
+        print(f"\n=== 群体相似度分析 ===")
+        group_sim_df = pd.read_csv(group_similarities_path)
+        
+        for emb_type in ['fused_embedding', 'behavior_embedding', 'location_embedding', 'attribute_embedding']:
+            sim_col = f'{emb_type}_group_similarity'
+            if sim_col in group_sim_df.columns:
+                sim_value = group_sim_df[sim_col].iloc[0]
+                if pd.notna(sim_value):
+                    dim_name = emb_type.replace('_', ' ').title()
+                    print(f"{dim_name:20s}: {sim_value:.4f}")
+    else:
+        print(f"\n群体相似度文件不存在: {group_similarities_path}")
 
 
 if __name__ == "__main__":

@@ -497,57 +497,51 @@ class UserExpansionModel:
         
         return results_df
     
-    def compute_similarities(self, dataset: UserExpansionDataset, top_users: List[str], 
-                           seed_users: List[str]) -> pd.DataFrame:
-        """计算扩量用户与种子用户在各维度上的相似度"""
-        print("计算各维度相似度...")
+    def compute_group_similarities(self, dataset: UserExpansionDataset, expansion_users: List[str], 
+                                 seed_users: List[str]) -> Dict[str, float]:
+        """计算扩量群体与种子用户群体在各维度上的整体相似度"""
+        print("计算扩量群体与种子用户群体的整体相似度...")
         
-        similarities = []
+        group_similarities = {}
         
-        for user_id in top_users:
-            if user_id not in dataset.user_embeddings:
+        # 对每种向量类型计算群体相似度
+        for emb_type in ['fused_embedding', 'behavior_embedding', 'location_embedding', 'attribute_embedding']:
+            print(f"计算 {emb_type} 维度相似度...")
+            
+            # 收集扩量群体的向量
+            expansion_embeddings = []
+            for user_id in expansion_users:
+                if user_id in dataset.user_embeddings:
+                    user_emb = dataset.user_embeddings[user_id].get(emb_type, None)
+                    if user_emb is not None:
+                        expansion_embeddings.append(np.array(user_emb).flatten())
+            
+            # 收集种子用户群体的向量
+            seed_embeddings = []
+            for user_id in seed_users:
+                if user_id in dataset.user_embeddings:
+                    user_emb = dataset.user_embeddings[user_id].get(emb_type, None)
+                    if user_emb is not None:
+                        seed_embeddings.append(np.array(user_emb).flatten())
+            
+            if len(expansion_embeddings) == 0 or len(seed_embeddings) == 0:
+                print(f"警告: {emb_type} 维度数据不足，跳过")
+                group_similarities[f'{emb_type}_group_similarity'] = None
                 continue
             
-            user_data = dataset.user_embeddings[user_id]
-            user_similarities = {'user_id': user_id}
+            # 计算扩量群体中心向量（均值）
+            expansion_center = np.mean(expansion_embeddings, axis=0).reshape(1, -1)
             
-            # 对每种向量类型计算相似度
-            for emb_type in ['fused_embedding', 'behavior_embedding', 'location_embedding', 'attribute_embedding']:
-                user_emb = user_data.get(emb_type, None)
-                
-                if user_emb is None:
-                    user_similarities[f'{emb_type}_similarity'] = None
-                    continue
-                
-                # 计算与所有种子用户的相似度
-                similarities_with_seeds = []
-                
-                for seed_user in seed_users:
-                    if seed_user not in dataset.user_embeddings:
-                        continue
-                    
-                    seed_data = dataset.user_embeddings[seed_user]
-                    seed_emb = seed_data.get(emb_type, None)
-                    
-                    if seed_emb is None:
-                        continue
-                    
-                    # 计算余弦相似度
-                    user_emb_flat = np.array(user_emb).flatten().reshape(1, -1)
-                    seed_emb_flat = np.array(seed_emb).flatten().reshape(1, -1)
-                    
-                    similarity = cosine_similarity(user_emb_flat, seed_emb_flat)[0][0]
-                    similarities_with_seeds.append(similarity)
-                
-                # 取平均相似度
-                if similarities_with_seeds:
-                    user_similarities[f'{emb_type}_similarity'] = np.mean(similarities_with_seeds)
-                else:
-                    user_similarities[f'{emb_type}_similarity'] = None
+            # 计算种子用户群体中心向量（均值）
+            seed_center = np.mean(seed_embeddings, axis=0).reshape(1, -1)
             
-            similarities.append(user_similarities)
+            # 计算两个群体中心向量的余弦相似度
+            group_similarity = cosine_similarity(expansion_center, seed_center)[0][0]
+            group_similarities[f'{emb_type}_group_similarity'] = group_similarity
+            
+            print(f"{emb_type} 群体相似度: {group_similarity:.4f}")
         
-        return pd.DataFrame(similarities)
+        return group_similarities
     
     def save_model(self, filepath: str):
         """保存模型"""
@@ -630,18 +624,19 @@ def main():
     # 6. 获取top-k扩量用户（排除种子用户）
     expansion_users = predictions_df[predictions_df['is_seed'] == 0].head(args.top_k)
     
-    # 7. 计算相似度
+    # 7. 计算群体相似度
     seed_user_list = list(dataset.seed_users)
     top_user_list = expansion_users['user_id'].tolist()
     
-    similarities_df = model.compute_similarities(dataset, top_user_list, seed_user_list)
+    group_similarities = model.compute_group_similarities(dataset, top_user_list, seed_user_list)
     
-    # 8. 合并结果
-    final_results = expansion_users.merge(similarities_df, on='user_id', how='left')
-    
-    # 9. 保存结果
+    # 8. 保存结果
     predictions_df.to_csv(os.path.join(args.output_dir, "all_users_predictions.csv"), index=False)
-    final_results.to_csv(os.path.join(args.output_dir, "expansion_results.csv"), index=False)
+    expansion_users.to_csv(os.path.join(args.output_dir, "expansion_results.csv"), index=False)
+    
+    # 保存群体相似度结果
+    group_similarities_df = pd.DataFrame([group_similarities])
+    group_similarities_df.to_csv(os.path.join(args.output_dir, "group_similarities.csv"), index=False)
     
     # 10. 保存模型（可选）
     if args.save_model:
@@ -655,17 +650,17 @@ def main():
     print(f"平均扩量分数: {expansion_users['score'].mean():.4f}")
     print(f"扩量分数标准差: {expansion_users['score'].std():.4f}")
     
-    # 相似度统计
+    # 群体相似度统计
+    print("\n=== 群体相似度统计 ===")
     for emb_type in ['fused_embedding', 'behavior_embedding', 'location_embedding', 'attribute_embedding']:
-        sim_col = f'{emb_type}_similarity'
-        if sim_col in final_results.columns:
-            valid_sims = final_results[sim_col].dropna()
-            if len(valid_sims) > 0:
-                print(f"{emb_type} 平均相似度: {valid_sims.mean():.4f}")
+        sim_key = f'{emb_type}_group_similarity'
+        if sim_key in group_similarities and group_similarities[sim_key] is not None:
+            print(f"{emb_type} 群体相似度: {group_similarities[sim_key]:.4f}")
     
     print(f"\n结果已保存到: {args.output_dir}")
     print("- all_users_predictions.csv: 所有用户的预测分数")
     print("- expansion_results.csv: 扩量用户详细结果")
+    print("- group_similarities.csv: 群体相似度结果")
 
 
 if __name__ == "__main__":
