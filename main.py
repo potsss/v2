@@ -58,6 +58,17 @@ def train(user_sequences, url_mappings):
             except Exception as e:
                 print(f"无法加载预处理数据: {e}")
                 return None
+        
+        # 如果启用位置功能，也需要加载位置数据
+        if Config.ENABLE_LOCATION:
+            try:
+                location_sequences, location_mappings = dp.load_location_processed()
+                if location_sequences:
+                    print(f"成功加载 {len(location_sequences)} 个用户的位置序列")
+                else:
+                    print("位置数据未找到，将在矩阵分解过程中重新处理")
+            except Exception as e:
+                print(f"加载位置数据时出错: {e}，将在矩阵分解过程中重新处理")
         success = dp.process_matrix_factorization()
         if success:
             print("矩阵分解训练完成！")
