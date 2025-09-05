@@ -1,0 +1,5 @@
+[33mcb2dc2f[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmaster[m[33m)[m train bug fixed
+[33ma70cbda[m train bug fixed
+[33mae35466[m train bug fixed
+[33maa498a4[m[33m ([m[1;31morigin/master[m[33m)[m feat(preprocess): 加入tqdm进度条; refactor: 群体相似度计算与示例脚本同步
+[33m720131d[m 修复AttributeEmbeddingModel调用问题

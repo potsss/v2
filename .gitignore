@@ -65,6 +65,7 @@ experiments/*/runs/
 experiments/*/visualizations/
 experiments/
 
+data/
 
 
 # 临时文件

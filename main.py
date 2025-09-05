@@ -46,6 +46,18 @@ def train(user_sequences, url_mappings):
         print("检测到矩阵分解模式，将使用矩阵分解训练...")
         # 使用矩阵分解训练
         dp = DataPreprocessorV2()
+        # 确保加载已处理的数据
+        if user_sequences and url_mappings:
+            dp.user_sequences = user_sequences
+            dp.url_to_id = url_mappings["url_to_id"]
+            dp.id_to_url = url_mappings["id_to_url"]
+        else:
+            # 如果没有传入数据，尝试从文件加载
+            try:
+                dp.load_processed()
+            except Exception as e:
+                print(f"无法加载预处理数据: {e}")
+                return None
         success = dp.process_matrix_factorization()
         if success:
             print("矩阵分解训练完成！")
@@ -895,7 +907,11 @@ def cli():
         dp = DataPreprocessorV2()
         
         # 确保基础数据已处理
-        user_sequences, url_mappings = dp.load_processed()
+        try:
+            user_sequences, url_mappings = dp.load_processed()
+        except:
+            user_sequences, url_mappings = None, None
+            
         if user_sequences is None:
             print("未找到已处理的行为数据，开始预处理...")
             user_sequences, url_mappings, _, _ = dp.preprocess()
