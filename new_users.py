@@ -142,6 +142,143 @@ def compute_new_user_embeddings(behavior_model, url_mappings, new_behavior_path=
     return ue
 
 
+def compute_new_user_embeddings_mf(url_mappings, new_behavior_path=None, save_path=None):
+    """
+    使用矩阵分解方法计算新用户的嵌入向量
+    
+    Args:
+        url_mappings: URL映射字典
+        new_behavior_path: 新用户行为数据路径
+        save_path: 保存路径
+    
+    Returns:
+        dict: 新用户嵌入向量字典
+    """
+    if new_behavior_path is None:
+        new_behavior_path = Config.NEW_USER_BEHAVIOR_PATH
+    
+    print(f"📁 加载矩阵分解模型和映射...")
+    
+    # 加载ALS模型
+    als_model_path = os.path.join(Config.PROCESSED_DATA_PATH, "als_model.pkl")
+    mappings_path = os.path.join(Config.PROCESSED_DATA_PATH, "unified_item_mappings.pkl")
+    
+    try:
+        from .matrix_factorization import ALSMatrixFactorization, UnifiedItemProcessor
+        import pickle as _p
+        
+        # 加载ALS模型
+        als_model = ALSMatrixFactorization()
+        als_model.load_model(als_model_path)
+        print(f"   - ALS模型加载完成: {als_model.factors} 维")
+        
+        # 加载统一物品映射
+        item_processor = UnifiedItemProcessor()
+        item_processor.load_mappings(mappings_path)
+        print(f"   - 统一物品映射加载完成: {len(item_processor.item_to_id)} 个物品")
+        
+    except Exception as e:
+        print(f"❌ 加载矩阵分解模型失败: {e}")
+        return {}
+    
+    print(f"📊 处理新用户行为数据: {new_behavior_path}")
+    
+    # 加载训练实体信息
+    training_entities = load_training_entities(Config.PROCESSED_DATA_PATH)
+    if training_entities:
+        print(f"   - 训练URL数量: {len(training_entities.get('urls', set()))}")
+    else:
+        print("   - 警告: 未找到训练实体信息，将处理所有URL")
+    
+    # 处理新用户行为数据
+    new_sequences, unknown_urls = load_new_user_behavior(new_behavior_path, url_mappings, training_entities)
+    
+    if not new_sequences:
+        print("❌ 没有可用的新用户行为数据")
+        return {}
+    
+    print(f"✅ 成功处理 {len(new_sequences)} 个新用户")
+    if unknown_urls:
+        print(f"⚠️  发现 {len(unknown_urls)} 个未知URL")
+        print(f"   - 前5个未知URL: {sorted(list(unknown_urls))[:5]}")
+    else:
+        print("✅ 所有URL都在训练集中")
+    
+    print(f"🧮 使用矩阵分解计算新用户嵌入向量...")
+    
+    # 获取物品嵌入向量
+    item_embeddings = als_model.get_item_embeddings(normalize=True)
+    print(f"   - 物品嵌入向量维度: {item_embeddings.shape}")
+    
+    # 计算新用户向量
+    user_embeddings = {}
+    processed_count = 0
+    
+    for user_id, sequence in new_sequences.items():
+        if not sequence:
+            continue
+        
+        # 收集该用户的物品向量和权重
+        vectors = []
+        weights = []
+        from collections import Counter
+        item_counts = Counter(sequence)
+        
+        for item_id, count in item_counts.items():
+            # 将URL ID转换为统一物品ID
+            if item_id in item_processor.item_to_id:
+                matrix_idx = item_processor.item_to_id[item_id]
+                if matrix_idx < len(item_embeddings):
+                    vectors.append(item_embeddings[matrix_idx])
+                    weights.append(float(count))
+        
+        if vectors:
+            import numpy as np
+            vectors = np.array(vectors)
+            weights = np.array(weights)
+            weights = weights / weights.sum()  # 归一化权重
+            
+            # 加权平均
+            user_vector = np.average(vectors, axis=0, weights=weights)
+            
+            # 归一化
+            norm = np.linalg.norm(user_vector)
+            if norm > 0:
+                user_vector = user_vector / norm
+            
+            user_embeddings[user_id] = user_vector
+            processed_count += 1
+    
+    print(f"✅ 成功计算 {processed_count} 个新用户向量")
+    
+    if save_path:
+        print(f"💾 保存新用户向量到: {save_path}")
+        with open(save_path, 'wb') as f:
+            pickle.dump(user_embeddings, f)
+    
+    # 生成详细报告
+    print(f"📋 生成兼容性报告...")
+    report = {
+        "total_new_users": len(new_sequences),
+        "processed_users": len(user_embeddings),
+        "unknown_urls": sorted(list(unknown_urls)),
+        "known_url_count": len(training_entities["urls"]) if training_entities else 0,
+        "processing_rate": f"{len(user_embeddings)/len(new_sequences)*100:.1f}%" if new_sequences else "0%",
+        "model_type": "matrix_factorization",
+        "embedding_dim": als_model.factors,
+        "method": "ALS_matrix_factorization"
+    }
+    
+    report_path = os.path.join(Config.PROCESSED_DATA_PATH, "new_user_compatibility_report_mf.json")
+    with open(report_path, 'w', encoding='utf-8') as f:
+        json.dump(report, f, ensure_ascii=False, indent=2)
+    
+    print(f"✅ 兼容性报告已保存: {report_path}")
+    print(f"📈 处理成功率: {report['processing_rate']}")
+    
+    return user_embeddings
+
+
 def _load_attribute_resources():
     aip = os.path.join(Config.PROCESSED_DATA_PATH, "attribute_info.pkl")
     aep = os.path.join(Config.PROCESSED_DATA_PATH, "attribute_encoders.pkl")

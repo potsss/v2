@@ -20,7 +20,7 @@ from .trainer import TrainerV2
 from .trainer import FusionTrainer
 from .visualize import tsne_scatter
 from .node2vec_utils import build_item_graph, generate_walks
-from .new_users import save_training_entities, compute_new_user_embeddings
+from .new_users import save_training_entities, compute_new_user_embeddings, compute_new_user_embeddings_mf
 
 
 def set_seed(seed: int):
@@ -268,14 +268,44 @@ def cli():
         print(f"✅ 找到新用户行为数据: {new_behavior_path}")
         
         # 检查模型文件
-        model_path = os.path.join(Config.MODEL_SAVE_PATH, f"{'item2vec' if Config.MODEL_TYPE=='item2vec' else 'node2vec'}_model.pth")
-        if not os.path.exists(model_path):
-            print(f"❌ 错误: 训练好的模型文件不存在: {model_path}")
-            print("请先运行训练模式:")
-            print(f"  python main.py --mode train --model_type {Config.MODEL_TYPE}")
-            return
-        
-        print(f"✅ 找到训练好的模型: {model_path}")
+        if Config.MODEL_TYPE == "matrix_factorization":
+            # 矩阵分解模式：检查矩阵分解用户向量文件
+            mf_path = os.path.join(Config.MODEL_SAVE_PATH, "matrix_factorization_user_embeddings.pkl")
+            als_model_path = os.path.join(Config.PROCESSED_DATA_PATH, "als_model.pkl")
+            mappings_path = os.path.join(Config.PROCESSED_DATA_PATH, "unified_item_mappings.pkl")
+            
+            if not os.path.exists(mf_path):
+                print(f"❌ 错误: 矩阵分解用户向量文件不存在: {mf_path}")
+                print("请先运行矩阵分解训练:")
+                print("  python main.py --mode train")
+                return
+            
+            if not os.path.exists(als_model_path):
+                print(f"❌ 错误: ALS模型文件不存在: {als_model_path}")
+                print("请先运行矩阵分解训练:")
+                print("  python main.py --mode train")
+                return
+                
+            if not os.path.exists(mappings_path):
+                print(f"❌ 错误: 统一物品映射文件不存在: {mappings_path}")
+                print("请先运行矩阵分解训练:")
+                print("  python main.py --mode train")
+                return
+            
+            print(f"✅ 找到矩阵分解相关文件:")
+            print(f"   - 用户向量: {mf_path}")
+            print(f"   - ALS模型: {als_model_path}")
+            print(f"   - 物品映射: {mappings_path}")
+        else:
+            # Item2Vec/Node2Vec模式：检查模型文件
+            model_path = os.path.join(Config.MODEL_SAVE_PATH, f"{'item2vec' if Config.MODEL_TYPE=='item2vec' else 'node2vec'}_model.pth")
+            if not os.path.exists(model_path):
+                print(f"❌ 错误: 训练好的模型文件不存在: {model_path}")
+                print("请先运行训练模式:")
+                print(f"  python main.py --mode train --model_type {Config.MODEL_TYPE}")
+                return
+            
+            print(f"✅ 找到训练好的模型: {model_path}")
         
         # 检查URL映射
         if url_mappings is None:
@@ -287,16 +317,27 @@ def cli():
         print(f"✅ URL映射已加载: {len(url_mappings['url_to_id'])} 个URL")
         
         print("\n2. 加载模型...")
-        if model is None:
-            vocab = len(url_mappings["url_to_id"]) if url_mappings else 0
-            model = Item2Vec(vocab, Config.EMBEDDING_DIM)
-            ckpt = torch.load(model_path, map_location=Config.DEVICE_OBJ, weights_only=False)
-            model.load_state_dict(ckpt["model_state_dict"])
-            print(f"✅ 模型加载完成: {Config.MODEL_TYPE} (词汇量: {vocab}, 嵌入维度: {Config.EMBEDDING_DIM})")
+        if Config.MODEL_TYPE == "matrix_factorization":
+            # 矩阵分解模式：不需要加载传统模型，直接使用矩阵分解结果
+            print(f"✅ 使用矩阵分解模式，无需加载传统模型")
+        else:
+            # Item2Vec/Node2Vec模式：加载传统模型
+            if model is None:
+                vocab = len(url_mappings["url_to_id"]) if url_mappings else 0
+                model = Item2Vec(vocab, Config.EMBEDDING_DIM)
+                ckpt = torch.load(model_path, map_location=Config.DEVICE_OBJ, weights_only=False)
+                model.load_state_dict(ckpt["model_state_dict"])
+                print(f"✅ 模型加载完成: {Config.MODEL_TYPE} (词汇量: {vocab}, 嵌入维度: {Config.EMBEDDING_DIM})")
         
         print("\n3. 处理新用户数据...")
-        out = os.path.join(Config.MODEL_SAVE_PATH, f"new_user_embeddings_{Config.MODEL_TYPE}.pkl")
-        res = compute_new_user_embeddings(model, url_mappings, new_behavior_path=Config.NEW_USER_BEHAVIOR_PATH, save_path=out)
+        if Config.MODEL_TYPE == "matrix_factorization":
+            # 矩阵分解模式：使用专门的矩阵分解新用户计算
+            out = os.path.join(Config.MODEL_SAVE_PATH, f"new_user_embeddings_matrix_factorization.pkl")
+            res = compute_new_user_embeddings_mf(url_mappings, new_behavior_path=Config.NEW_USER_BEHAVIOR_PATH, save_path=out)
+        else:
+            # Item2Vec/Node2Vec模式：使用传统方法
+            out = os.path.join(Config.MODEL_SAVE_PATH, f"new_user_embeddings_{Config.MODEL_TYPE}.pkl")
+            res = compute_new_user_embeddings(model, url_mappings, new_behavior_path=Config.NEW_USER_BEHAVIOR_PATH, save_path=out)
         
         print("\n4. 结果统计...")
         print(f"✅ 成功计算新用户向量数量: {len(res)}")
