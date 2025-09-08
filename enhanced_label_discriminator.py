@@ -494,11 +494,35 @@ def main():
         print("数据加载失败，程序退出")
         return
     
+    # 检查类别分布
+    unique_labels = np.unique(y)
+    label_counts = np.bincount(y)
+    print(f"类别分布: {label_counts}")
+    print(f"类别标签: {unique_labels}")
+    
+    # 检查是否有类别样本数过少
+    min_samples_per_class = min(label_counts[label_counts > 0])
+    print(f"最少样本数: {min_samples_per_class}")
+    
     # 数据分割
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=args.test_size, random_state=args.random_state, 
-        stratify=y
-    )
+    if min_samples_per_class < 2:
+        print("警告: 存在样本数少于2的类别，将不使用分层采样")
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=args.test_size, random_state=args.random_state
+        )
+    else:
+        # 检查是否所有类别都有足够的样本进行分层
+        try:
+            X_train, X_test, y_train, y_test = train_test_split(
+                X, y, test_size=args.test_size, random_state=args.random_state, 
+                stratify=y
+            )
+        except ValueError as e:
+            print(f"分层采样失败: {e}")
+            print("回退到随机采样")
+            X_train, X_test, y_train, y_test = train_test_split(
+                X, y, test_size=args.test_size, random_state=args.random_state
+            )
     
     print(f"训练集大小: {X_train.shape[0]}, 测试集大小: {X_test.shape[0]}")
     

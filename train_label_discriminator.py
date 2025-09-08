@@ -125,9 +125,33 @@ def train_and_evaluate_discriminator(X, y, test_size=0.2, random_state=42):
             print(f"唯一的类别值: {unique_labels[0]}")
         return
 
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=test_size, random_state=random_state, stratify=y
-    )
+    # 检查类别分布
+    label_counts = np.bincount(y)
+    print(f"类别分布: {label_counts}")
+    print(f"类别标签: {unique_labels}")
+    
+    # 检查是否有类别样本数过少
+    min_samples_per_class = min(label_counts[label_counts > 0])
+    print(f"最少样本数: {min_samples_per_class}")
+    
+    # 如果某个类别只有1个样本，不使用stratify
+    if min_samples_per_class < 2:
+        print("警告: 存在样本数少于2的类别，将不使用分层采样")
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=test_size, random_state=random_state
+        )
+    else:
+        # 检查是否所有类别都有足够的样本进行分层
+        try:
+            X_train, X_test, y_train, y_test = train_test_split(
+                X, y, test_size=test_size, random_state=random_state, stratify=y
+            )
+        except ValueError as e:
+            print(f"分层采样失败: {e}")
+            print("回退到随机采样")
+            X_train, X_test, y_train, y_test = train_test_split(
+                X, y, test_size=test_size, random_state=random_state
+            )
     
     print(f"训练数据形状: {X_train.shape}, 测试数据形状: {X_test.shape}")
     
