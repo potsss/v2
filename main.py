@@ -252,16 +252,75 @@ def cli():
                 compute_embeddings(model, user_sequences, url_mappings)
 
     if args.mode == "compute_new_users":
+        print("=" * 60)
+        print("开始计算新用户向量...")
+        print("=" * 60)
+        
+        # 检查必要的文件和配置
+        print("1. 检查必要文件...")
+        new_behavior_path = Config.NEW_USER_BEHAVIOR_PATH
+        if not os.path.exists(new_behavior_path):
+            print(f"❌ 错误: 新用户行为数据文件不存在: {new_behavior_path}")
+            print("请确保以下文件存在:")
+            print(f"  - {new_behavior_path}")
+            return
+        
+        print(f"✅ 找到新用户行为数据: {new_behavior_path}")
+        
+        # 检查模型文件
+        model_path = os.path.join(Config.MODEL_SAVE_PATH, f"{'item2vec' if Config.MODEL_TYPE=='item2vec' else 'node2vec'}_model.pth")
+        if not os.path.exists(model_path):
+            print(f"❌ 错误: 训练好的模型文件不存在: {model_path}")
+            print("请先运行训练模式:")
+            print(f"  python main.py --mode train --model_type {Config.MODEL_TYPE}")
+            return
+        
+        print(f"✅ 找到训练好的模型: {model_path}")
+        
+        # 检查URL映射
+        if url_mappings is None:
+            print("❌ 错误: URL映射数据未加载")
+            print("请先运行预处理模式:")
+            print("  python main.py --mode preprocess")
+            return
+        
+        print(f"✅ URL映射已加载: {len(url_mappings['url_to_id'])} 个URL")
+        
+        print("\n2. 加载模型...")
         if model is None:
             vocab = len(url_mappings["url_to_id"]) if url_mappings else 0
             model = Item2Vec(vocab, Config.EMBEDDING_DIM)
-            model_path = os.path.join(Config.MODEL_SAVE_PATH, f"{'item2vec' if Config.MODEL_TYPE=='item2vec' else 'node2vec'}_model.pth")
-            if os.path.exists(model_path):
-                ckpt = torch.load(model_path, map_location=Config.DEVICE_OBJ, weights_only=False)
-                model.load_state_dict(ckpt["model_state_dict"])
+            ckpt = torch.load(model_path, map_location=Config.DEVICE_OBJ, weights_only=False)
+            model.load_state_dict(ckpt["model_state_dict"])
+            print(f"✅ 模型加载完成: {Config.MODEL_TYPE} (词汇量: {vocab}, 嵌入维度: {Config.EMBEDDING_DIM})")
+        
+        print("\n3. 处理新用户数据...")
         out = os.path.join(Config.MODEL_SAVE_PATH, f"new_user_embeddings_{Config.MODEL_TYPE}.pkl")
         res = compute_new_user_embeddings(model, url_mappings, new_behavior_path=Config.NEW_USER_BEHAVIOR_PATH, save_path=out)
-        print(f"新用户向量数量: {len(res)}")
+        
+        print("\n4. 结果统计...")
+        print(f"✅ 成功计算新用户向量数量: {len(res)}")
+        print(f"✅ 新用户向量已保存到: {out}")
+        
+        # 检查兼容性报告
+        report_path = os.path.join(Config.PROCESSED_DATA_PATH, "new_user_compatibility_report.json")
+        if os.path.exists(report_path):
+            print(f"✅ 兼容性报告已生成: {report_path}")
+            try:
+                import json
+                with open(report_path, 'r', encoding='utf-8') as f:
+                    report = json.load(f)
+                print(f"   - 总新用户数: {report.get('total_new_users', 'N/A')}")
+                print(f"   - 未知URL数: {len(report.get('unknown_urls', []))}")
+                print(f"   - 已知URL数: {report.get('known_url_count', 'N/A')}")
+                if report.get('unknown_urls'):
+                    print(f"   - 前5个未知URL: {report['unknown_urls'][:5]}")
+            except Exception as e:
+                print(f"   - 报告解析失败: {e}")
+        
+        print("\n" + "=" * 60)
+        print("新用户向量计算完成！")
+        print("=" * 60)
 
     # 训练融合（无监督对齐头：让融合向量贴近行为向量）
     if args.mode == "train_fusion":

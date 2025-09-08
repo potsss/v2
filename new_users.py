@@ -76,25 +76,69 @@ def load_new_user_behavior(behavior_path, url_mappings, training_entities=None):
 
 
 def compute_new_user_embeddings(behavior_model, url_mappings, new_behavior_path=None, save_path=None):
+    """
+    计算新用户的嵌入向量
+    
+    Args:
+        behavior_model: 训练好的行为模型
+        url_mappings: URL映射字典
+        new_behavior_path: 新用户行为数据路径
+        save_path: 保存路径
+    
+    Returns:
+        dict: 新用户嵌入向量字典
+    """
     if new_behavior_path is None:
         new_behavior_path = Config.NEW_USER_BEHAVIOR_PATH
+    
+    print(f"📁 加载训练实体信息...")
     training_entities = load_training_entities(Config.PROCESSED_DATA_PATH)
+    if training_entities:
+        print(f"   - 训练URL数量: {len(training_entities.get('urls', set()))}")
+    else:
+        print("   - 警告: 未找到训练实体信息，将处理所有URL")
+    
+    print(f"📊 处理新用户行为数据: {new_behavior_path}")
     new_sequences, unknown_urls = load_new_user_behavior(new_behavior_path, url_mappings, training_entities)
+    
     if not new_sequences:
-        print("没有可用的新用户行为数据")
+        print("❌ 没有可用的新用户行为数据")
         return {}
+    
+    print(f"✅ 成功处理 {len(new_sequences)} 个新用户")
+    if unknown_urls:
+        print(f"⚠️  发现 {len(unknown_urls)} 个未知URL")
+        print(f"   - 前5个未知URL: {sorted(list(unknown_urls))[:5]}")
+    else:
+        print("✅ 所有URL都在训练集中")
+    
+    print(f"🧮 计算新用户嵌入向量...")
     ue = UserEmbedding(behavior_model, new_sequences, url_mappings).compute()
+    
     if save_path:
+        print(f"💾 保存新用户向量到: {save_path}")
         with open(save_path, 'wb') as f:
             pickle.dump(ue, f)
-    # 简要报告
+    
+    # 生成详细报告
+    print(f"📋 生成兼容性报告...")
     report = {
         "total_new_users": len(new_sequences),
+        "processed_users": len(ue),
         "unknown_urls": sorted(list(unknown_urls)),
         "known_url_count": len(training_entities["urls"]) if training_entities else 0,
+        "processing_rate": f"{len(ue)/len(new_sequences)*100:.1f}%" if new_sequences else "0%",
+        "model_type": Config.MODEL_TYPE,
+        "embedding_dim": Config.EMBEDDING_DIM
     }
-    with open(os.path.join(Config.PROCESSED_DATA_PATH, "new_user_compatibility_report.json"), 'w', encoding='utf-8') as f:
+    
+    report_path = os.path.join(Config.PROCESSED_DATA_PATH, "new_user_compatibility_report.json")
+    with open(report_path, 'w', encoding='utf-8') as f:
         json.dump(report, f, ensure_ascii=False, indent=2)
+    
+    print(f"✅ 兼容性报告已保存: {report_path}")
+    print(f"📈 处理成功率: {report['processing_rate']}")
+    
     return ue
 
 
