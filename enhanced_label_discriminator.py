@@ -526,6 +526,32 @@ def main():
     
     print(f"训练集大小: {X_train.shape[0]}, 测试集大小: {X_test.shape[0]}")
     
+    # 在特征预处理前，对训练集做类别均衡（上采样）
+    y_train_int = y_train.astype(int)
+    class_counts = np.bincount(y_train_int)
+    print(f"均衡前训练集标签分布: {class_counts}")
+    max_count = class_counts.max()
+    indices_per_class = {c: np.where(y_train_int == c)[0] for c in np.unique(y_train_int)}
+    upsampled_indices = []
+    rng = np.random.default_rng(args.random_state)
+    for c, idx in indices_per_class.items():
+        if len(idx) == 0:
+            continue
+        if len(idx) < max_count:
+            extra = rng.choice(idx, size=max_count - len(idx), replace=True)
+            upsampled = np.concatenate([idx, extra])
+        else:
+            upsampled = idx
+        upsampled_indices.append(upsampled)
+    upsampled_indices = np.concatenate(upsampled_indices) if upsampled_indices else np.arange(len(y_train))
+    X_train = X_train[upsampled_indices]
+    y_train = y_train[upsampled_indices]
+    # 打乱
+    perm = rng.permutation(len(y_train))
+    X_train = X_train[perm]
+    y_train = y_train[perm]
+    print(f"均衡后训练集标签分布: {np.bincount(y_train.astype(int))}")
+
     # 特征预处理
     X_train_processed, X_test_processed = discriminator.preprocess_features(
         X_train, X_test, y_train,

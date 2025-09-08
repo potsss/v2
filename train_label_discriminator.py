@@ -154,12 +154,39 @@ def train_and_evaluate_discriminator(X, y, test_size=0.2, random_state=42):
             )
     
     print(f"训练数据形状: {X_train.shape}, 测试数据形状: {X_test.shape}")
-    
-    # 确保标签是整数类型以便使用np.bincount
-    y_train_int = y_train.astype(int)
-    y_test_int = y_test.astype(int)
 
-    print(f"训练集标签分布: {np.bincount(y_train_int) if len(y_train_int) > 0 else '空训练集标签'}")
+    # 训练集类别均衡（上采样少数类）
+    y_train_int = y_train.astype(int)
+    class_counts = np.bincount(y_train_int)
+    print(f"均衡前训练集标签分布: {class_counts}")
+
+    max_count = class_counts.max()
+    indices_per_class = {c: np.where(y_train_int == c)[0] for c in np.unique(y_train_int)}
+    upsampled_indices = []
+    rng = np.random.default_rng(42)
+    for c, idx in indices_per_class.items():
+        if len(idx) == 0:
+            continue
+        if len(idx) < max_count:
+            extra = rng.choice(idx, size=max_count - len(idx), replace=True)
+            upsampled = np.concatenate([idx, extra])
+        else:
+            upsampled = idx
+        upsampled_indices.append(upsampled)
+    upsampled_indices = np.concatenate(upsampled_indices) if upsampled_indices else np.arange(len(y_train))
+
+    X_train = X_train[upsampled_indices]
+    y_train = y_train[upsampled_indices]
+
+    # 打乱
+    perm = rng.permutation(len(y_train))
+    X_train = X_train[perm]
+    y_train = y_train[perm]
+
+    print(f"均衡后训练集标签分布: {np.bincount(y_train.astype(int))}")
+
+    # 确保标签是整数类型以便使用np.bincount
+    y_test_int = y_test.astype(int)
     print(f"测试集标签分布: {np.bincount(y_test_int) if len(y_test_int) > 0 else '空测试集标签'}")
 
     model = LogisticRegression(random_state=random_state, max_iter=1000, solver='saga', verbose=10) 
