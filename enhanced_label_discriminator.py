@@ -80,7 +80,24 @@ class EnhancedLabelDiscriminator:
             processed_users.add(user_id)
 
             if user_id in user_embeddings_dict:
-                X_list.append(user_embeddings_dict[user_id])
+                embedding_data = user_embeddings_dict[user_id]
+                
+                # 处理新的comprehensive格式
+                if isinstance(embedding_data, dict):
+                    # 优先使用fused_embedding，如果没有则使用behavior_embedding
+                    if 'fused_embedding' in embedding_data and embedding_data['fused_embedding'] is not None:
+                        embedding_vector = embedding_data['fused_embedding']
+                    elif 'behavior_embedding' in embedding_data and embedding_data['behavior_embedding'] is not None:
+                        embedding_vector = embedding_data['behavior_embedding']
+                    else:
+                        print(f"警告: 用户 {user_id} 没有可用的嵌入向量，跳过")
+                        missing_embeddings_count += 1
+                        continue
+                else:
+                    # 处理旧的直接向量格式
+                    embedding_vector = embedding_data
+                
+                X_list.append(embedding_vector)
                 y_list.append(label)
                 user_ids.append(user_id)
             else:
